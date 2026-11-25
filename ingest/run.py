@@ -1,11 +1,11 @@
-from collections import Counter
-
 from .sources import fetch_all
+from .pipeline import ingest
 
 
 if __name__ == "__main__":
-    jobs = fetch_all()
-    print(f"\nTotal: {len(jobs)}")
-    print(Counter(job.source for job in jobs))
-    for job in jobs[:3]:
-        print(f"- {job.title} @ {job.company} | {job.experience_level} | {job.skills}")
+    for source, jobs in fetch_all().items():
+        stats = ingest(source, jobs)
+        print(
+            f"[{source}] +{stats['new']} new, {stats['updated']} updated, "
+            f"{stats['expired']} expired, {stats['unchanged']} skipped"
+        )

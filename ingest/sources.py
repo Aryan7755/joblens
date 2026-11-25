@@ -13,7 +13,7 @@ GREENHOUSE_BOARDS = ["stripe", "airbnb", "cloudflare"]
 
 def clean_html(raw: str) -> str:
     text = BeautifulSoup(html.unescape(raw or ""), "html.parser").get_text(" ")
-    return " ".join(text.split())
+    return " ".join(text.split()).replace("\x00", "")
 
 
 def make_job(
@@ -110,18 +110,17 @@ def fetch_greenhouse(board: str) -> list[Job]:
     return jobs
 
 
-def fetch_all() -> list[Job]:
+def fetch_all() -> dict[str, list[Job]]:
     fetchers = [("remotive", fetch_remotive), ("arbeitnow", fetch_arbeitnow)]
     fetchers += [
         (f"greenhouse:{board}", lambda board=board: fetch_greenhouse(board))
         for board in GREENHOUSE_BOARDS
     ]
-    jobs = []
+    results = {}
     for name, fetcher in fetchers:
         try:
-            fetched_jobs = fetcher()
-            print(f"{name}: {len(fetched_jobs)} jobs")
-            jobs += fetched_jobs
-        except (requests.RequestException, ValueError, KeyError, TypeError) as error:
+            results[name] = fetcher()
+            print(f"{name}: {len(results[name])} jobs fetched")
+        except Exception as error:
             print(f"{name}: FAILED ({error})")
-    return jobs
+    return results
