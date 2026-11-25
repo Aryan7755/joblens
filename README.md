@@ -1,11 +1,15 @@
 # JobLens
+
+![CI](https://github.com/Aryan7755/joblens/actions/workflows/ci.yml/badge.svg)
+
 Hybrid job search engine: Postgres full-text + pgvector semantic search, merged with Reciprocal Rank Fusion.
 
 ## Run locally
 docker compose up -d
 
 ## Status
-🚧 Phase 4 complete: hybrid search with full-text and vector retrieval, reciprocal-rank fusion, and filters.
+🚧 Search is implemented; evaluation tooling and CI are added. Relevance metrics
+are pending manual labels.
 
 ## How incremental ingestion works
 
@@ -52,3 +56,29 @@ Filters are applied before ranking. This dataset currently has no jobs that
 are both remote and intern-level, so
 `/search?q=developer&remote=true&level=intern` returns no results; the
 `/search?q=backend&skills=python,docker` filter returns matching jobs.
+
+## Evaluation
+
+The evaluation set contains 30 queries. Labels are created from pooled top-10
+results from FTS, vector, and hybrid search, then judged manually:
+
+```bash
+python -m evaluation.label
+python -m evaluation.run_eval
+```
+
+Relevance labels and Recall@10/MRR results are pending manual judging. Metrics
+will be recorded here after at least 25 queries have relevant jobs labeled.
+
+## Tests and automation
+
+Run the unit tests locally with:
+
+```bash
+python -m pytest -q
+```
+
+GitHub Actions runs the tests on pushes and pull requests. The ingestion
+workflow can be started manually and requires the `DATABASE_URL` repository
+secret; its six-hour schedule remains disabled until the cloud database is
+configured.
