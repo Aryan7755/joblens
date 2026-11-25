@@ -5,4 +5,4 @@ Hybrid job search engine: Postgres full-text + pgvector semantic search, merged 
 docker compose up -d
 
 ## Status
-🚧 Phase 0 complete: database running with pgvector.
+🚧 Phase 1 complete: `jobs` schema with full-text (GIN) and vector (HNSW) indexes.
