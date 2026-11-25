@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobLens</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#222}
+    h1{margin-bottom:.2rem}
+    .sub{color:#666;margin-top:0}
+    form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}
+    input[type=text]{flex:1;min-width:200px;padding:.6rem;font-size:1rem}
+    select,button{padding:.6rem}
+    .job{border:1px solid #ddd;border-radius:8px;padding:.8rem 1rem;margin:.6rem 0}
+    .job a{font-weight:600;text-decoration:none}
+    .meta{color:#666;font-size:.9rem}
+    .chip{display:inline-block;background:#eef;border-radius:10px;padding:1px 8px;margin:2px;font-size:.8rem}
+  </style>
+</head>
+<body>
+  <h1>JobLens</h1>
+  <p class="sub">Hybrid job search: keyword + semantic, merged with Reciprocal Rank Fusion</p>
+  <form id="search-form">
+    <input type="text" id="query" placeholder="e.g. server-side engineer, python intern" required>
+    <select id="mode">
+      <option value="hybrid">Hybrid</option>
+      <option value="fts">Keyword only</option>
+      <option value="vector">Semantic only</option>
+    </select>
+    <select id="level">
+      <option value="">Any level</option>
+      <option value="intern">intern</option>
+      <option value="junior">junior</option>
+      <option value="mid">mid</option>
+      <option value="senior">senior</option>
+    </select>
+    <label><input type="checkbox" id="remote"> Remote</label>
+    <button type="submit">Search</button>
+  </form>
+  <div id="out" aria-live="polite"></div>
+  <script>
+    const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[character]));
+
+    document.getElementById("search-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const output = document.getElementById("out");
+      const query = document.getElementById("query").value;
+      const mode = document.getElementById("mode").value;
+      const level = document.getElementById("level").value;
+      const remote = document.getElementById("remote").checked;
+      output.textContent = "Searching...";
+
+      const params = new URLSearchParams({q: query, mode});
+      if (level) params.set("level", level);
+      if (remote) params.set("remote", "true");
+
+      try {
+        const response = await fetch("/search?" + params);
+        const data = await response.json();
+        if (!response.ok) {
+          output.textContent = "Error: " + (data.detail?.[0]?.msg || response.status);
+          return;
+        }
+        output.innerHTML = `<p class="meta">${data.count} results (${esc(data.mode)})</p>` +
+          data.results.map(job => {
+            const url = /^https?:\/\//i.test(job.url) ? esc(job.url) : "#";
+            const location = esc(job.location) || "n/a";
+            const metadata = `${esc(job.company)} · ${location} · ${esc(job.level)}` +
+              `${job.is_remote ? " · remote" : ""} · score ${esc(job.score)}`;
+            const skills = job.skills.map(skill =>
+              `<span class="chip">${esc(skill)}</span>`
+            ).join("");
+            return `<div class="job">
+              <a href="${url}" target="_blank" rel="noopener">${esc(job.title)}</a>
+              <div class="meta">${metadata}</div>
+              <div>${skills}</div>
+            </div>`;
+          }).join("");
+      } catch {
+        output.textContent = "Request failed";
+      }
+    });
+  </script>
+</body>
+</html>

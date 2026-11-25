@@ -2,19 +2,42 @@
 
 ![CI](https://github.com/Aryan7755/joblens/actions/workflows/ci.yml/badge.svg)
 
-Hybrid job search engine: Postgres full-text + pgvector semantic search, merged with Reciprocal Rank Fusion.
+Hybrid job search using PostgreSQL full-text search and pgvector semantic
+search, merged with Reciprocal Rank Fusion.
 
-## Run locally
-docker compose up -d
+**Live demo:** Not deployed yet. A Neon connection string and Render service
+configuration are required before a public demo can be linked.
 
-## Status
-🚧 Search is implemented; evaluation tooling and CI are added. Relevance metrics
-are pending manual labels.
+**Demo GIF:** To be recorded after deployment.
 
-## How incremental ingestion works
+## Architecture
 
-The first ingestion added jobs from all five sources. Running it again found no
-content changes, so it skipped re-embedding and only refreshed `last_seen`:
+```mermaid
+flowchart LR
+  A[Remotive / Arbeitnow / Greenhouse] --> B[Fetch + normalize]
+  B --> C{Hash changed?}
+  C -- yes --> D[Embed + upsert]
+  C -- no --> E[Bump last_seen]
+  D --> F[(Postgres + pgvector)]
+  E --> F
+  F --> G[Keyword + Vector search]
+  G --> H[RRF merge]
+  H --> I[FastAPI + search page]
+```
+
+## Evaluation
+
+The evaluation set contains 30 queries. Labels are created from pooled top-10
+results from FTS, vector, and hybrid search, then judged manually.
+
+Relevance labels and Recall@10/MRR results are pending manual judging. The
+evaluation table will be added after at least 25 queries have relevant jobs
+labeled.
+
+## Incremental ingestion
+
+Unchanged jobs skip re-embedding and only refresh `last_seen`. A verified
+second run on the local dataset reported:
 
 ```text
 [remotive] +0 new, 0 updated, 0 expired, 15 skipped
@@ -24,61 +47,75 @@ content changes, so it skipped re-embedding and only refreshed `last_seen`:
 [greenhouse:cloudflare] +0 new, 0 updated, 0 expired, 513 skipped
 ```
 
-## Search API
+## Design decisions
 
-Start the API from the repository root after the database is running and jobs
-have been ingested:
+- **Hybrid retrieval:** keyword search handles exact technologies and terms,
+  while semantic search can find related concepts such as backend work for a
+  "server-side engineer" query.
+- **Rank fusion:** FTS rank and cosine distance use different scales, so the
+  search combines result ranks with Reciprocal Rank Fusion rather than adding
+  incomparable raw scores.
+- **Hash-based updates:** unchanged job content reuses its stored embedding;
+  jobs missing from a successful source fetch expire only within that source.
+- **FastEmbed:** ONNX embeddings provide 384-dimensional vectors for pgvector
+  without requiring a hosted embedding service.
+
+## What I'd improve
+
+- Add a cross-encoder reranker and query expansion.
+- Improve the skill taxonomy and support pagination.
+- Incorporate user feedback signals into ranking.
+
+## Run locally
+
+Start PostgreSQL with pgvector:
 
 ```bash
+docker compose up -d
+```
+
+Create and activate a virtual environment, then install dependencies:
+
+```bash
+python -m venv venv
+# Windows PowerShell: .\venv\Scripts\Activate.ps1
+# macOS/Linux: source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Ingest jobs and start the API from the repository root:
+
+```bash
+python -m ingest.run
 uvicorn app.main:app --reload
 ```
 
-Open [http://localhost:8000/docs](http://localhost:8000/docs) to try the
-interactive API. `GET /health` returns `{"status":"ok"}`. Search supports
-`hybrid`, `fts`, and `vector` modes, plus `remote`, `level`, and comma-separated
-`skills` filters. For example:
+Open [http://localhost:8000](http://localhost:8000) for the search page or
+[http://localhost:8000/docs](http://localhost:8000/docs) for the API explorer.
+The first model load/download can take a little while.
 
-```text
-/search?q=python%20backend%20developer&mode=hybrid
-/search?q=backend&skills=python,docker
-```
+## Docker
 
-The synonym query shows the difference between keyword and semantic retrieval.
-On the current dataset, `server-side engineer` returns 3 FTS results and 10
-vector results:
-
-```text
-/search?q=server-side%20engineer&mode=fts
-/search?q=server-side%20engineer&mode=vector
-```
-
-Filters are applied before ranking. This dataset currently has no jobs that
-are both remote and intern-level, so
-`/search?q=developer&remote=true&level=intern` returns no results; the
-`/search?q=backend&skills=python,docker` filter returns matching jobs.
-
-## Evaluation
-
-The evaluation set contains 30 queries. Labels are created from pooled top-10
-results from FTS, vector, and hybrid search, then judged manually:
+Build and run the web app with Docker after setting `DATABASE_URL` to a
+PostgreSQL database containing the schema and ingested jobs:
 
 ```bash
-python -m evaluation.label
-python -m evaluation.run_eval
+docker build -t joblens .
+docker run --rm -p 8000:8000 -e DATABASE_URL="$DATABASE_URL" joblens
 ```
 
-Relevance labels and Recall@10/MRR results are pending manual judging. Metrics
-will be recorded here after at least 25 queries have relevant jobs labeled.
+The container preloads the embedding model during image build and warms it
+when the app starts.
 
 ## Tests and automation
 
-Run the unit tests locally with:
+Run the unit tests with:
 
 ```bash
 python -m pytest -q
 ```
 
-GitHub Actions runs the tests on pushes and pull requests. The ingestion
-workflow can be started manually and requires the `DATABASE_URL` repository
-secret; its six-hour schedule remains disabled until the cloud database is
-configured.
+GitHub Actions runs tests on pushes and pull requests. Ingestion can be
+started manually from Actions when the repository `DATABASE_URL` secret points
+to the intended database. The scheduled trigger remains disabled until a
+cloud database and secret are configured.

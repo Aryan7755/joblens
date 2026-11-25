@@ -1,8 +1,25 @@
-from fastapi import FastAPI, Query
+from contextlib import asynccontextmanager
+from pathlib import Path
 
+from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse
+
+from ingest.embed import embed_texts
 from .search import search
 
-app = FastAPI(title="JobLens")
+
+@asynccontextmanager
+async def lifespan(app):
+    embed_texts(["warm up"])
+    yield
+
+
+app = FastAPI(title="JobLens", lifespan=lifespan)
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 @app.get("/health")
