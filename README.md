@@ -2,13 +2,32 @@
 
 ![CI](https://github.com/Aryan7755/joblens/actions/workflows/ci.yml/badge.svg)
 
-Hybrid job search using PostgreSQL full-text search and pgvector semantic
-search, merged with Reciprocal Rank Fusion.
+Hybrid job search engine: Postgres full-text search + pgvector semantic search, merged with Reciprocal Rank Fusion. The index refreshes itself every 6 hours.
 
-**Live demo:** Not deployed yet. A Neon connection string and Render service
-configuration are required before a public demo can be linked.
+## 🔗 Live demo: https://joblens-yvqo.onrender.com
 
-**Demo GIF:** To be recorded after deployment.
+![Demo](docs/demo.gif)
+
+> Hosted on a free tier, so the first search after idle may take a few seconds.
+
+## Why hybrid?
+
+Query: `server-side engineer`
+
+| Keyword only | Semantic only |
+|---|---|
+| ![keyword](docs/keyword.png) | ![semantic](docs/semantic.png) |
+
+Keyword search misses synonyms. Semantic search can miss exact terms like `C++`. Hybrid covers both.
+
+## Features
+
+- Ingests jobs from Remotive, Arbeitnow and Greenhouse boards
+- Hash-based incremental updates: only new or changed jobs are re-embedded
+- Expired jobs are detected and marked automatically
+- Hybrid search: Postgres full-text + pgvector, merged with RRF
+- SQL filters: remote, experience level, skills
+- Scheduled ingestion via GitHub Actions, tests and CI
 
 ## Architecture
 
@@ -27,95 +46,77 @@ flowchart LR
 
 ## Evaluation
 
-The evaluation set contains 30 queries. Labels are created from pooled top-10
-results from FTS, vector, and hybrid search, then judged manually.
+Evaluated on 25 hand-labelled queries. Labels came from pooling the top results of all three methods, shuffling them, and judging relevance manually.
 
-Relevance labels and Recall@10/MRR results are pending manual judging. The
-evaluation table will be added after at least 25 queries have relevant jobs
-labeled.
+| Method | Recall@10 | MRR |
+|---|---|---|
+| Keyword (FTS) | 0.53 | 0.64 |
+| Semantic (vector) | 0.72 | 0.71 |
+| Hybrid (RRF) | 0.74 | 0.66 |
+
+Hybrid has the best recall (0.53 → 0.74 over keyword-only). Semantic has slightly better MRR. With only 25 queries, the gap between semantic and hybrid is within noise, so I don't claim one beats the other.
 
 ## Incremental ingestion
 
-Unchanged jobs skip re-embedding and only refresh `last_seen`. A verified
-second run on the local dataset reported:
+Each run hashes every job and only embeds what changed. Jobs missing from a successful fetch are marked `expired`, scoped per source so an API outage can't wipe data. A GitHub Actions cron job runs this every 6 hours.
 
-```text
-[remotive] +0 new, 0 updated, 0 expired, 15 skipped
-[arbeitnow] +0 new, 0 updated, 0 expired, 300 skipped
-[greenhouse:stripe] +0 new, 0 updated, 0 expired, 771 skipped
-[greenhouse:airbnb] +0 new, 0 updated, 0 expired, 200 skipped
-[greenhouse:cloudflare] +0 new, 0 updated, 0 expired, 513 skipped
+![incremental](docs/incremental.png)
+
+## API
+
 ```
+GET /search?q=python backend&mode=hybrid&remote=true&level=junior&skills=python,docker
+```
+
+| Param | Values |
+|---|---|
+| `q` | search text (required) |
+| `mode` | `hybrid` (default), `fts`, `vector` |
+| `remote` | `true` / `false` |
+| `level` | `intern`, `junior`, `mid`, `senior` |
+| `skills` | comma-separated, e.g. `python,docker` |
+| `limit` | 1–50 (default 10) |
+
+Interactive docs: `/docs`
 
 ## Design decisions
 
-- **Hybrid retrieval:** keyword search handles exact technologies and terms,
-  while semantic search can find related concepts such as backend work for a
-  "server-side engineer" query.
-- **Rank fusion:** FTS rank and cosine distance use different scales, so the
-  search combines result ranks with Reciprocal Rank Fusion rather than adding
-  incomparable raw scores.
-- **Hash-based updates:** unchanged job content reuses its stored embedding;
-  jobs missing from a successful source fetch expire only within that source.
-- **FastEmbed:** ONNX embeddings provide 384-dimensional vectors for pgvector
-  without requiring a hosted embedding service.
+- **Hybrid search:** keyword search is exact, vector search understands meaning, and each covers the other's weakness.
+- **RRF on ranks, not scores:** `ts_rank` and cosine distance are on different scales, so I fuse ranks instead.
+- **Hash-based updates:** embedding is the slow step, so unchanged jobs are skipped entirely.
+- **Idempotent upserts:** a unique key on `(source, external_id)` makes re-runs safe.
+- **Per-source expiry and empty-fetch guard:** a failing API never expires good data.
+- **fastembed (ONNX):** the same MiniLM model as sentence-transformers, but light enough for a 512 MB free host.
+- **HNSW index:** approximate nearest neighbour, trading a little accuracy for speed.
 
-## What I'd improve
+## Limitations and next steps
 
-- Add a cross-encoder reranker and query expansion.
-- Improve the skill taxonomy and support pagination.
-- Incorporate user feedback signals into ranking.
+- Evaluation set is small (25 queries), so small differences are noise
+- Skill extraction uses a fixed keyword list, not a real taxonomy
+- Strict filters on vector search can return fewer than 10 results
+- Next: cross-encoder reranker, query expansion, weighted RRF, pagination, user feedback signals
+
+## Project structure
+
+```
+app/          FastAPI app + search logic + search page
+ingest/       fetchers, skill extraction, incremental pipeline
+db/           SQL migrations
+evaluation/   labelling and Recall@10 / MRR scripts
+tests/        pytest suite
+```
 
 ## Run locally
 
-Start PostgreSQL with pgvector:
-
 ```bash
 docker compose up -d
-```
-
-Create and activate a virtual environment, then install dependencies:
-
-```bash
-python -m venv venv
-# Windows PowerShell: .\venv\Scripts\Activate.ps1
-# macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
-```
-
-Ingest jobs and start the API from the repository root:
-
-```bash
 python -m ingest.run
 uvicorn app.main:app --reload
 ```
 
-Open [http://localhost:8000](http://localhost:8000) for the search page or
-[http://localhost:8000/docs](http://localhost:8000/docs) for the API explorer.
-The first model load/download can take a little while.
+Open http://localhost:8000. Run the tests with `python -m pytest -q`.
 
-## Docker
+## Stack
 
-Build and run the web app with Docker after setting `DATABASE_URL` to a
-PostgreSQL database containing the schema and ingested jobs:
-
-```bash
-docker build -t joblens .
-docker run --rm -p 8000:8000 -e DATABASE_URL="$DATABASE_URL" joblens
-```
-
-The container preloads the embedding model during image build and warms it
-when the app starts.
-
-## Tests and automation
-
-Run the unit tests with:
-
-```bash
-python -m pytest -q
-```
-
-GitHub Actions runs tests on pushes and pull requests. Ingestion can be
-started manually from Actions when the repository `DATABASE_URL` secret points
-to the intended database. The scheduled trigger remains disabled until a
-cloud database and secret are configured.
+Python · FastAPI · Postgres + pgvector · fastembed · Docker · GitHub Actions · Render · Neon
